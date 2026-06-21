@@ -4,7 +4,7 @@
  * 功能概述：
  *   在抖音用户主页 (/user/xxx) 的控制台执行此脚本，注入一个侧边抽屉面板，
  *   支持分页拉取用户全部公开作品、表格/网格双视图展示、多维度排序、搜索过滤、
- *   批量导出 JSON、视频播放、图文幻灯片预览（含背景音乐）。
+ *   批量导出 JSON/CSV/TXT、导出视频（zip 压缩包）。
  * 
  * 数据来源：
  *   - 用户信息：douyin.com/aweme/v1/web/user/profile/other
@@ -21,9 +21,10 @@
  *   - 需要登录态 cookie（在已登录的抖音页面执行）
  *   - API 仅返回用户公开作品，私密/已删除作品无法获取
  *   - 重复执行会自动清理旧面板实例
+ *   - 视频导出通过浏览器原生下载触发，逐个下载，不打包
  * 
  * @author hankin
- * @version 2026-06-19
+ * @version 2026-06-20
  */
 (async function DouyinDrawerTableFull() {
     // ============================================================
@@ -177,6 +178,11 @@
         const tailwindScript = document.createElement("script");
         tailwindScript.src = "https://cdn.tailwindcss.com";
         document.head.appendChild(tailwindScript);
+
+        // 引入 fflate（流式 zip 打包，用于导出视频）
+        const fflateScript = document.createElement("script");
+        fflateScript.src = "https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js";
+        document.head.appendChild(fflateScript);
 
         // 自定义Tailwind配置 —— 需等待 tailwind 脚本加载完成后才能设置
         const customConfig = document.createElement("script");
@@ -384,6 +390,27 @@ th[data-col="operation"],td[data-col="operation"]{min-width:140px;width:140px;te
 @keyframes musicBounce{from{transform:translateY(0)}
 to{transform:translateY(-4px)}
 }.image-slideshow-counter{position:absolute;top:-40px;left:0;color:rgba(255,255,255,0.7);font-size:14px;font-variant-numeric:tabular-nums}
+.export-video-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:100003;display:none;align-items:center;justify-content:center;backdrop-filter:blur(2px)}
+.export-video-overlay.show{display:flex}
+.export-video-panel{background:#fff;border-radius:14px;box-shadow:0 12px 48px rgba(0,0,0,0.25);width:420px;padding:28px 32px;display:flex;flex-direction:column;gap:16px;animation:exportVideoFadeIn 0.25s ease}
+#dy-drawer-wrap.dark-mode .export-video-panel{background:#2d2d2d;color:#e5e5e5}
+@keyframes exportVideoFadeIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+.export-video-title{font-size:16px;font-weight:600;color:#1a1a1a;display:flex;align-items:center;gap:8px}
+#dy-drawer-wrap.dark-mode .export-video-title{color:#e5e5e5}
+.export-video-progress-wrap{display:flex;flex-direction:column;gap:8px}
+.export-video-progress-bar{width:100%;height:8px;background:#eee;border-radius:4px;overflow:hidden}
+#dy-drawer-wrap.dark-mode .export-video-progress-bar{background:#404040}
+.export-video-progress-fill{height:100%;width:0%;background:linear-gradient(90deg,#fe2c55,#ff6b81);border-radius:4px;transition:width 0.3s}
+.export-video-progress-text{font-size:13px;color:#666;text-align:center;min-height:20px}
+#dy-drawer-wrap.dark-mode .export-video-progress-text{color:#aaa}
+.export-video-count{font-size:12px;color:#999;text-align:center}
+#dy-drawer-wrap.dark-mode .export-video-count{color:#777}
+.export-video-btn-row{display:flex;gap:10px;justify-content:center;margin-top:4px}
+.export-video-btn{padding:8px 20px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:1px solid #e8e8e8;background:#f5f5f5;transition:all 0.2s}
+.export-video-btn:hover{background:#eee}
+.export-video-btn.primary{background:#fe2c55;color:#fff;border-color:#fe2c55}
+.export-video-btn.primary:hover{background:#e5264c}
+.export-video-btn:disabled{opacity:0.5;cursor:not-allowed}
         `;
         document.head.appendChild(style);
 
@@ -460,6 +487,7 @@ to{transform:translateY(-4px)}
                         <button class="export-dropdown-item" data-format="json">JSON</button>
                         <button class="export-dropdown-item" data-format="csv">CSV</button>
                         <button class="export-dropdown-item" data-format="txt">TXT</button>
+                        <button class="export-dropdown-item" data-format="video">导出视频 (.zip)</button>
                     </div>
                 </div>
                 
@@ -716,6 +744,28 @@ to{transform:translateY(-4px)}
                 </div>
                 <audio id="imageSlideshowAudio" loop></audio>
             </div>
+
+            <!-- 视频导出进度浮层 -->
+            <div class="export-video-overlay" id="exportVideoOverlay">
+                <div class="export-video-panel">
+                    <div class="export-video-title">
+                        <svg class="w-5 h-5" fill="none" stroke="#fe2c55" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M12 4v16m8-8H4" stroke-linecap="round"/>
+                        </svg>
+                        导出视频
+                    </div>
+                    <div class="export-video-progress-wrap">
+                        <div class="export-video-progress-bar">
+                            <div class="export-video-progress-fill" id="exportVideoProgressFill"></div>
+                        </div>
+                        <div class="export-video-progress-text" id="exportVideoProgressText">准备中...</div>
+                    </div>
+                    <div class="export-video-count" id="exportVideoCount"></div>
+                    <div class="export-video-btn-row">
+                        <button class="export-video-btn" id="exportVideoCancelBtn">取消</button>
+                    </div>
+                </div>
+            </div>
         `;
         document.body.appendChild(wrap);
 
@@ -919,7 +969,11 @@ to{transform:translateY(-4px)}
                 e.stopPropagation();
                 const fmt = item.dataset.format;
                 exportDropdown.classList.remove("open");
-                exportSelectData(fmt);
+                if (fmt === "video") {
+                    exportVideoZip();
+                } else {
+                    exportSelectData(fmt);
+                }
             };
         });
         
@@ -1958,6 +2012,221 @@ to{transform:translateY(-4px)}
         a.download = filename;
         a.click();
         URL.revokeObjectURL(url);
+    }
+
+    /**
+     * 用 blob URL 触发浏览器下载（同源 blob URL，download 属性一定生效）
+     */
+    function triggerDownload(blob, filename) {
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = filename;
+        a.style.display = "none";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        // 60 秒后清理，确保下载已触发
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    }
+
+    /**
+     * 等待 fflate 加载完成（最多 10 秒）
+     */
+    async function waitFflate() {
+        let waited = 0;
+        while (typeof window.fflate === "undefined" && waited < 10000) {
+            await new Promise(r => setTimeout(r, 200));
+            waited += 200;
+        }
+        if (typeof window.fflate === "undefined") throw new Error("fflate 库加载超时，请刷新页面后重试！");
+    }
+
+    /**
+     * 匿名 fetch 视频 blob，依次尝试候选地址
+     * 策略：同源 HEAD 拿到 CDN 真实地址 → 匿名 fetch CDN（credentials: omit）→ 带 cookie fetch
+     * @returns {Promise<{blob: Blob, filename: string}|null>} 成功返回数据，失败返回 null
+     */
+    async function fetchVideoBlob(item) {
+        const safeTitle = (item.desc || "无标题").replace(/[\/\\:*?"<>|]/g, "_").slice(0, 50);
+        const filename = `${item.aweme_id}_${safeTitle}.mp4`;
+
+        const candidates = [];
+        const paList = item.video?.play_addr?.url_list || [];
+        const brList = (item.video?.bit_rate || []).map(br => br?.play_addr?.url_list || []).flat();
+        const dlList = item.video?.download_addr?.url_list || [];
+        paList.forEach(u => { if (u && !candidates.includes(u)) candidates.push(u); });
+        brList.forEach(u => { if (u && !candidates.includes(u)) candidates.push(u); });
+        dlList.forEach(u => { if (u && !candidates.includes(u)) candidates.push(u); });
+
+        if (!candidates.length) {
+            console.warn("[导出视频] 无视频地址：", item.aweme_id);
+            return null;
+        }
+
+        for (let ci = 0; ci < candidates.length; ci++) {
+            const candidate = candidates[ci];
+            const isDouyin = candidate.includes("douyin.com");
+
+            // 同源 HEAD 拿到重定向后的真实 CDN 地址
+            let directUrls = [candidate];
+            if (isDouyin) {
+                try {
+                    const rdrResp = await fetch(candidate, { method: "HEAD", redirect: "manual", credentials: "include" });
+                    if (rdrResp.status === 301 || rdrResp.status === 302) {
+                        const loc = rdrResp.headers.get("Location") || rdrResp.headers.get("location");
+                        if (loc) {
+                            directUrls = [loc, candidate];
+                            console.log(`[导出视频] 重定向 → CDN：${loc.slice(0, 80)}`);
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`[导出视频] HEAD 重定向失败：${e.message}`);
+                }
+            }
+
+            for (const url of directUrls) {
+                // 先匿名（CDN 通常允许匿名 CORS），再带 cookie
+                for (const creds of ["omit", "include"]) {
+                    try {
+                        const resp = await fetch(url, { method: "GET", redirect: "follow", credentials: creds });
+                        if (resp.type !== "opaque" && resp.type !== "opaqueredirect" && resp.ok) {
+                            const blob = await resp.blob();
+                            if (blob.size > 0) {
+                                console.log(`[导出视频] ✅ 下载成功(${creds})：${filename} ${(blob.size / 1024 / 1024).toFixed(2)} MB`);
+                                return { blob, filename };
+                            }
+                        }
+                        console.warn(`[导出视频] ${creds} fetch → type=${resp.type} status=${resp.status}`);
+                    } catch (e) {
+                        console.warn(`[导出视频] ${creds} fetch 失败：${e.message}`);
+                    }
+                }
+            }
+        }
+
+        console.warn("[导出视频] 全部地址失败：", item.aweme_id);
+        return null;
+    }
+
+    /**
+     * 导出选中视频，下载后打包为一个 zip 文件
+     * 使用 fflate 流式打包（level:0 不压缩，视频已压缩）
+     */
+    async function exportVideoZip() {
+        // 从 DOM 回读勾选状态
+        document.querySelectorAll("#tableBody input[type=checkbox]:checked, #gridViewContainer .grid-card-check:checked").forEach(cb => {
+            selectedIds.add(cb.dataset.aid);
+        });
+        if (!selectedIds.size) return alert("请勾选至少一条作品！");
+
+        const videoItems = allWorksList.filter(item =>
+            selectedIds.has(item.aweme_id) && !item.images
+        );
+        if (!videoItems.length) {
+            return alert("选中的作品中没有视频类型，请选择视频作品后再试！");
+        }
+
+        // 等待 fflate 加载
+        try {
+            await waitFflate();
+        } catch (e) {
+            return alert(e.message);
+        }
+
+        const overlay = document.getElementById("exportVideoOverlay");
+        const fill = document.getElementById("exportVideoProgressFill");
+        const text = document.getElementById("exportVideoProgressText");
+        const countEl = document.getElementById("exportVideoCount");
+        const cancelBtn = document.getElementById("exportVideoCancelBtn");
+
+        let cancelled = false;
+        let successCount = 0;
+        let failCount = 0;
+
+        overlay.classList.add("show");
+        fill.style.width = "0%";
+
+        cancelBtn.onclick = () => {
+            cancelled = true;
+            text.textContent = "已取消";
+            setTimeout(() => overlay.classList.remove("show"), 1500);
+        };
+
+        // 阶段 1：逐个下载视频 blob，收集到内存
+        const collected = [];  // [{blob, filename}]
+        for (let i = 0; i < videoItems.length; i++) {
+            if (cancelled) break;
+
+            const item = videoItems[i];
+            const idx = i + 1;
+            const safeTitle = (item.desc || "无标题").replace(/[\/\\:*?"<>|]/g, "_").slice(0, 50);
+
+            text.textContent = `正在下载 ${idx}/${videoItems.length}...`;
+            countEl.textContent = `当前：${safeTitle.slice(0, 30)}`;
+            fill.style.width = `${((idx - 1) / videoItems.length) * 75}%`;  // 75% 留给打包阶段
+
+            try {
+                const result = await fetchVideoBlob(item);
+                if (result) {
+                    collected.push(result);
+                    successCount++;
+                } else {
+                    failCount++;
+                }
+            } catch (e) {
+                console.error("[导出视频] 处理失败：", item.aweme_id, e.message);
+                failCount++;
+            }
+        }
+
+        if (cancelled || collected.length === 0) {
+            if (!cancelled) {
+                overlay.classList.remove("show");
+                alert("没有视频可以打包，请查看控制台日志。");
+            }
+            return;
+        }
+
+        // 阶段 2：fflate 打包所有 blob 为 zip
+        text.textContent = "正在打包 zip...";
+        countEl.textContent = `共 ${collected.length} 个视频`;
+        fill.style.width = "80%";
+
+        try {
+            const { zipSync } = window.fflate;
+
+            // 构建文件字典 { filename: Uint8Array }
+            const fileMap = {};
+            for (const { blob, filename } of collected) {
+                const ab = await blob.arrayBuffer();
+                fileMap[filename] = [new Uint8Array(ab), { level: 0 }];  // level:0 不压缩（视频已压缩）
+            }
+
+            fill.style.width = "95%";
+            const zipData = zipSync(fileMap);
+            fill.style.width = "100%";
+
+            // 触发 zip 下载
+            const nickname = userProfile?.nickname || "导出";
+            const dateStr = new Date().toISOString().slice(0, 10);
+            const zipFilename = `抖音视频_${nickname}_${dateStr}.zip`;
+            triggerDownload(new Blob([zipData], { type: "application/zip" }), zipFilename);
+
+            text.textContent = "打包完成！";
+            countEl.textContent = `共 ${successCount} 个视频${failCount > 0 ? `，${failCount} 个失败` : ""}`;
+            setTimeout(() => overlay.classList.remove("show"), 3000);
+
+            if (failCount > 0) {
+                setTimeout(() => {
+                    alert(`${successCount} 个视频已打包下载。\n${failCount} 个视频下载失败，已跳过，请查看控制台日志。`);
+                }, 3500);
+            }
+        } catch (e) {
+            console.error("[导出视频] zip 打包失败：", e);
+            overlay.classList.remove("show");
+            alert(`zip 打包失败：${e.message}`);
+        }
     }
 
     // ============================================================
