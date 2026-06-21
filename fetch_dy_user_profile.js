@@ -1,3 +1,14 @@
+// ==UserScript==
+// @name         抖音用户作品数据管理面板
+// @namespace    https://www.douyin.com/
+// @version      2026-06-21
+// @description  在抖音用户主页注入作品数据管理面板，支持拉取、筛选和导出公开作品数据
+// @author       hankin
+// @match        https://www.douyin.com/user/*
+// @run-at       document-idle
+// @grant        none
+// ==/UserScript==
+
 /**
  * 抖音用户作品数据管理面板 (Chrome 控制台注入脚本)
  * 
@@ -120,6 +131,77 @@
         const minutes = String(date.getMinutes()).padStart(2, '0');
         const seconds = String(date.getSeconds()).padStart(2, '0');
         return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    }
+
+    function getBestUrl(urlObj) {
+        if (typeof urlObj === "string") return urlObj;
+        const list = urlObj?.url_list || urlObj?.urlList || [];
+        return list.find(Boolean) || urlObj?.uri || "";
+    }
+
+    function findAvatarUrlDeep(obj, depth = 0, seen = new Set()) {
+        if (!obj || depth > 5 || seen.has(obj)) return "";
+        if (typeof obj === "string") {
+            return /https?:\/\/.+\.(jpg|jpeg|png|webp|image)/i.test(obj) || obj.includes("douyinpic.com") || obj.includes("byteimg.com") ? obj : "";
+        }
+        if (typeof obj !== "object") return "";
+        seen.add(obj);
+
+        const priorityKeys = [
+            "avatar_300x300", "avatar_larger", "avatar_medium", "avatar_thumb",
+            "avatar_url", "avatarUrl", "avatar", "cover"
+        ];
+        for (const key of priorityKeys) {
+            const url = getBestUrl(obj[key]) || findAvatarUrlDeep(obj[key], depth + 1, seen);
+            if (url) return url;
+        }
+
+        for (const [key, value] of Object.entries(obj)) {
+            if (!/avatar|head|photo|profile/i.test(key)) continue;
+            const url = getBestUrl(value) || findAvatarUrlDeep(value, depth + 1, seen);
+            if (url) return url;
+        }
+        return "";
+    }
+
+    function getPageAvatarUrl() {
+        const imgs = [...document.querySelectorAll('img[src], img[srcset]')];
+        const candidates = imgs
+            .map(img => img.currentSrc || img.src || img.getAttribute("src") || "")
+            .filter(src => src && !src.startsWith("data:"))
+            .filter(src => /douyinpic|byteimg|pstatp|avatar|user/i.test(src));
+        return candidates[0] || "";
+    }
+
+    function getUserAvatarUrl(user = userProfile) {
+        return getBestUrl(user?.avatar_300x300) ||
+            getBestUrl(user?.avatar_larger) ||
+            getBestUrl(user?.avatar_medium) ||
+            getBestUrl(user?.avatar_thumb) ||
+            getBestUrl(user?.__page_avatar_url) ||
+            findAvatarUrlDeep(user) ||
+            "";
+    }
+
+    function getAuthorAvatarUrl(item) {
+        return getUserAvatarUrl(item?.author) || getUserAvatarUrl(userProfile);
+    }
+
+    function getWorkTitle(item) {
+        return item?.desc ||
+            item?.preview_title ||
+            item?.share_info?.share_title ||
+            item?.statistics?.label_text ||
+            "";
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
     }
 
     /**
@@ -279,15 +361,19 @@ th.sort-active .sort-icon{opacity:1 !important}
 #dy-drawer-wrap.dark-mode .export-dropdown-btn{border-color:#404040;background:#2d2d2d;color:#e5e5e5}
 #dy-drawer-wrap.dark-mode .export-dropdown-btn:hover{background:#3a3a3a}
 #dy-drawer-wrap.dark-mode .export-dropdown.open .export-dropdown-btn{border-color:#fe2c55}
-.export-dropdown-menu{position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1px solid #e8e8e8;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.1);z-index:1000;display:none;overflow:hidden}
+.export-dropdown-menu{position:absolute;top:calc(100% + 4px);left:0;min-width:180px;background:#fff;border:1px solid #e8e8e8;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.1);z-index:1000;display:none;overflow:hidden}
 .export-dropdown.open .export-dropdown-menu{display:block}
 .export-dropdown-item{display:block;width:100%;padding:8px 14px;border:none;background:transparent;color:#333;font-size:13px;cursor:pointer;text-align:left;transition:background 0.1s;outline:none}
 .export-dropdown-item:hover{background:#f5f6f7;color:#fe2c55}
 .export-dropdown-item:active{background:#fee}
+.export-dropdown-section{padding:7px 14px 5px;color:#999;font-size:11px;font-weight:600;letter-spacing:0.4px;background:#fafafa;cursor:default}
+.export-dropdown-divider{height:1px;background:#eee;margin:4px 0}
 #dy-drawer-wrap.dark-mode .export-dropdown-menu{background:#2d2d2d;border-color:#404040;box-shadow:0 4px 16px rgba(0,0,0,0.4)}
 #dy-drawer-wrap.dark-mode .export-dropdown-item{color:#e5e5e5}
 #dy-drawer-wrap.dark-mode .export-dropdown-item:hover{background:#3a3a3a;color:#fe2c55}
 #dy-drawer-wrap.dark-mode .export-dropdown-item:active{background:#4a2020}
+#dy-drawer-wrap.dark-mode .export-dropdown-section{background:#252525;color:#888}
+#dy-drawer-wrap.dark-mode .export-dropdown-divider{background:#404040}
 .view-switch-menu{position:absolute;top:100%;left:0;margin-top:4px;background:white;border:1px solid #e8e8e8;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:8px 0;min-width:140px;z-index:100001;display:none}
 .view-switch-menu.show{display:block}
 .view-switch-item{display:flex;align-items:center;gap:8px;padding:8px 16px;cursor:pointer;font-size:14px;color:#333;transition:background 0.15s}
@@ -607,9 +693,18 @@ to{transform:translateY(-4px)}
                         <span class="arrow">▾</span>
                     </button>
                     <div class="export-dropdown-menu" id="exportDropdownMenu">
-                        <button class="export-dropdown-item" data-format="json">JSON</button>
-                        <button class="export-dropdown-item" data-format="csv">CSV</button>
-                        <button class="export-dropdown-item" data-format="txt">TXT</button>
+                        <div class="export-dropdown-section">导出选中</div>
+                        <button class="export-dropdown-item" data-scope="selected" data-format="json">JSON</button>
+                        <button class="export-dropdown-item" data-scope="selected" data-format="txt">TXT</button>
+                        <button class="export-dropdown-item" data-scope="selected" data-format="csv">CSV</button>
+                        <button class="export-dropdown-item" data-scope="selected" data-format="caption_txt">仅文案 TXT</button>
+                        <div class="export-dropdown-divider"></div>
+                        <div class="export-dropdown-section">批量导出全部</div>
+                        <button class="export-dropdown-item" data-scope="all" data-format="json">全部 JSON</button>
+                        <button class="export-dropdown-item" data-scope="all" data-format="txt">全部 TXT</button>
+                        <button class="export-dropdown-item" data-scope="all" data-format="csv">全部 CSV</button>
+                        <button class="export-dropdown-item" data-scope="all" data-format="caption_txt">全部文案 TXT</button>
+                        <div class="export-dropdown-divider"></div>
                         <button class="export-dropdown-item" data-format="video">导出视频 (.zip)</button>
                     </div>
                 </div>
@@ -1152,8 +1247,10 @@ to{transform:translateY(-4px)}
                 exportDropdown.classList.remove("open");
                 if (fmt === "video") {
                     exportVideoZip();
+                } else if (fmt === "caption_txt") {
+                    exportCaptionText(item.dataset.scope || "selected");
                 } else {
-                    exportSelectData(fmt);
+                    exportWorkData(fmt, item.dataset.scope || "selected");
                 }
             };
         });
@@ -1281,6 +1378,9 @@ to{transform:translateY(-4px)}
         
         // 保存预期作品总数
         totalWorksExpected = json.user?.aweme_count || 0;
+        if (json.user && !getUserAvatarUrl(json.user)) {
+            json.user.__page_avatar_url = getPageAvatarUrl();
+        }
         console.log('hankin-user数据==========',json);
         return json.user;
     }
@@ -1378,7 +1478,7 @@ to{transform:translateY(-4px)}
         } else {
             filterWorks = allWorksList.filter(item => {
                 const matchId = String(item.aweme_id).includes(kw);
-                const matchTitle = (item.desc || "").toLowerCase().includes(kw);
+                const matchTitle = getWorkTitle(item).toLowerCase().includes(kw);
                 return matchId || matchTitle;
             });
         }
@@ -1441,18 +1541,20 @@ to{transform:translateY(-4px)}
      */
     function renderUserInfo(user) {
         const box = document.getElementById("userInfoBox");
+        const avatarUrl = getUserAvatarUrl(user);
+        const avatarHtml = avatarUrl
+            ? `<img class="w-12 h-12 rounded-full object-cover shadow-md border border-white/70" src="${escapeHtml(avatarUrl)}" alt="头像" referrerpolicy="no-referrer" onerror="this.outerHTML='<div class=\\'w-12 h-12 rounded-full bg-gradient-to-br from-dy-red to-pink-500 flex items-center justify-center text-white font-bold text-lg shadow-md\\'>?</div>'">`
+            : `<div class="w-12 h-12 rounded-full bg-gradient-to-br from-dy-red to-pink-500 flex items-center justify-center text-white font-bold text-lg shadow-md">${escapeHtml((user.nickname || '?')[0])}</div>`;
         box.innerHTML = `
             <div class="flex items-start gap-4">
-                <div class="w-12 h-12 rounded-full bg-gradient-to-br from-dy-red to-pink-500 flex items-center justify-center text-dy-text font-bold text-lg shadow-md">
-                    ${(user.nickname || '?')[0]}
-                </div>
+                ${avatarHtml}
                 <div class="flex-1">
                     <div class="flex items-center gap-3 mb-2">
-                        <h4 class="text-base font-semibold text-dy-text m-0">${user.nickname}</h4>
-                        <span class="text-xs text-dy-text-secondary bg-dy-bg px-2 py-0.5 rounded font-mono" title="${user.sec_uid}" style="word-break: break-all;line-height: 1.4;">用户ID: ${user.sec_uid}</span>
+                        <h4 class="text-base font-semibold text-dy-text m-0">${escapeHtml(user.nickname || "")}</h4>
+                        <span class="text-xs text-dy-text-secondary bg-dy-bg px-2 py-0.5 rounded font-mono" title="${escapeHtml(user.sec_uid || "")}" style="word-break: break-all;line-height: 1.4;">用户ID: ${escapeHtml(user.sec_uid || "")}</span>
                         <button class="action-btn data" id="userDataBtn">json原数据</button>
                     </div>
-                    <p class="text-sm text-dy-text-secondary mb-2">${user.signature || "这个人很懒，还没有签名~"}</p>
+                    <p class="text-sm text-dy-text-secondary mb-2">${escapeHtml(user.signature || "这个人很懒，还没有签名~")}</p>
                     <div class="flex items-center gap-6 text-sm">
                         <span class="flex items-center gap-1.5">
                             <svg class="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 24 24">
@@ -1488,7 +1590,7 @@ to{transform:translateY(-4px)}
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
                             </svg>
                             <span class="text-dy-text-secondary">IP属地</span>
-                            <span class="font-semibold text-dy-text">${user.ip_location || user.ip_attr || user.region || user.address || user.city || "未知"}</span>
+                            <span class="font-semibold text-dy-text">${escapeHtml(user.ip_location || user.ip_attr || user.region || user.address || user.city || "未知")}</span>
                         </span>
                     </div>
                 </div>
@@ -1666,7 +1768,10 @@ to{transform:translateY(-4px)}
             (function renderLikesChart() {
                 const ctx = document.getElementById("dashLikesChart");
                 if (!ctx) return;
-                const labels = rankLikes.map((item, i) => (i + 1) + ". " + ((item.desc || "无标题").length > 16 ? (item.desc || "无标题").slice(0, 15) + "…" : (item.desc || "无标题")));
+                const labels = rankLikes.map((item, i) => {
+                    const title = getWorkTitle(item) || "无标题";
+                    return (i + 1) + ". " + (title.length > 16 ? title.slice(0, 15) + "…" : title);
+                });
                 const values = rankLikes.map(item => item.statistics?.digg_count || 0);
                 new window.Chart(ctx, {
                     type: "bar",
@@ -1702,7 +1807,10 @@ to{transform:translateY(-4px)}
             (function renderCommentsChart() {
                 const ctx = document.getElementById("dashCommentsChart");
                 if (!ctx) return;
-                const labels = rankComments.map((item, i) => (i + 1) + ". " + ((item.desc || "无标题").length > 16 ? (item.desc || "无标题").slice(0, 15) + "…" : (item.desc || "无标题")));
+                const labels = rankComments.map((item, i) => {
+                    const title = getWorkTitle(item) || "无标题";
+                    return (i + 1) + ". " + (title.length > 16 ? title.slice(0, 15) + "…" : title);
+                });
                 const values = rankComments.map(item => item.statistics?.comment_count || 0);
                 new window.Chart(ctx, {
                     type: "bar",
@@ -1766,10 +1874,11 @@ to{transform:translateY(-4px)}
         let tableHead = '<th style="width:100px">指标</th>';
         compareItems.forEach((item, i) => {
             const cover = item.video?.cover?.url_list[0] || (item.images?.[0]?.url_list[0] || '');
-            const escTitle = (item.desc || '无标题').replace(/"/g, '&quot;');
+            const title = getWorkTitle(item) || '无标题';
+            const escTitle = escapeHtml(title);
             coverCards += '<div class="compare-card">'+
                 (cover ? '<img class="compare-card-cover" src="'+cover+'" loading="lazy" onerror="this.style.background=\'#eee\'">' : '<div class="compare-card-cover" style="background:#eee;display:flex;align-items:center;justify-content:center;color:#ccc">无封面</div>')+
-                '<div class="compare-card-title" title="'+escTitle+'">#'+(i+1)+' '+(item.desc || '无标题')+'</div></div>';
+                '<div class="compare-card-title" title="'+escTitle+'">#'+(i+1)+' '+escTitle+'</div></div>';
             tableHead += '<th>作品 #'+(i+1)+'</th>';
         });
 
@@ -1823,11 +1932,12 @@ to{transform:translateY(-4px)}
                 const s = item.statistics || {};
                 const isVideo = !item.images;
                 const timeStr = formatDateTime(item.create_time);
-                const escTitle = (item.desc || '无标题').replace(/"/g, '&quot;');
+                const title = getWorkTitle(item) || '无标题';
+                const escTitle = escapeHtml(title);
                 html += '<div class="timeline-item"><div class="timeline-dot"></div>'+
                     (cover ? '<img class="timeline-thumb" src="'+cover+'" loading="lazy" onerror="this.style.background=\'#eee\'">' : '<div class="timeline-thumb" style="background:#eee;display:flex;align-items:center;justify-content:center;color:#ccc;font-size:10px">无封面</div>')+
                     '<div class="timeline-info"><div class="timeline-time">'+timeStr+' · '+(isVideo?'🎬 视频':'🖼️ 图文')+'</div>'+
-                    '<div class="timeline-title" title="'+escTitle+'">'+(item.desc || '无标题')+'</div>'+
+                    '<div class="timeline-title" title="'+escTitle+'">'+escTitle+'</div>'+
                     '<div class="timeline-stats"><span class="timeline-stat">👍 '+formatNumber(s.digg_count||0)+'</span>'+
                     '<span class="timeline-stat">💬 '+formatNumber(s.comment_count||0)+'</span>'+
                     '<span class="timeline-stat">📤 '+formatNumber(s.share_count||0)+'</span>'+
@@ -1902,6 +2012,8 @@ to{transform:translateY(-4px)}
             const stats = item.statistics || {};
             const videoUrl = item.video?.play_addr?.url_list?.[item.video.play_addr.url_list.length - 1] || "";
             const isVideo = !item.images && videoUrl;
+            const title = getWorkTitle(item) || "无标题";
+            const safeTitle = escapeHtml(title);
 
             const card = document.createElement("div");
             card.className = `grid-card${checked ? " selected" : ""}`;
@@ -1911,7 +2023,7 @@ to{transform:translateY(-4px)}
                 ${isVideo ? '<div class="grid-card-play"><svg width="32" height="32" viewBox="0 0 24 24" fill="white" opacity="0.85"><circle cx="12" cy="12" r="12" fill="rgba(0,0,0,0.4)"/><polygon points="10,8 16,12 10,16" fill="white"/></svg></div>' : ''}
                 ${cover ? `<img class="grid-card-cover" src="${cover}" alt="封面" loading="lazy" onerror="this.style.background='#f0f0f0'; this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect fill=%22%23f0f0f0%22 width=%2240%22 height=%2240%22/></svg>'">` : '<div class="grid-card-cover" style="display:flex;align-items:center;justify-content:center;background:#f0f0f0"><svg width="24" height="24" fill="none" stroke="#ccc" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg></div>'}
                 <div class="grid-card-body">
-                    <div class="grid-card-title">${(item.desc || "无标题").replace(/"/g, '&quot;')}</div>
+                    <div class="grid-card-title" title="${safeTitle}">${safeTitle}</div>
                     <div class="grid-card-meta">
                         <span>${formatDateTime(item.create_time).slice(0, 10)}</span>
                         <div class="grid-card-stats">
@@ -2078,6 +2190,8 @@ to{transform:translateY(-4px)}
                 const stats = item.statistics || {};
                 // 正确字段为 statistics.recommend_count
                 const promoteCount = stats.recommend_count || 0;
+                const title = getWorkTitle(item);
+                const safeTitle = escapeHtml(title || "");
 
                 tr.innerHTML = `
                     <td class="border-b border-dy-border px-3 py-3 text-center" data-col="select">
@@ -2086,7 +2200,7 @@ to{transform:translateY(-4px)}
                     <td class="border-b border-dy-border px-3 py-3 text-center id-cell" data-col="id" title="${aid}">${aid}</td>
                     <td class="border-b border-dy-border px-3 py-3 text-center" data-col="cover">${coverHtml}</td>
                     <td class="border-b border-dy-border px-3 py-3 text-sm" data-col="title" style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;">
-                        <span class="block truncate text-dy-text hover:text-dy-red transition-colors cursor-default" title="${(item.desc || '').replaceAll('"','&quot;')}">${item.desc || "-"}</span>
+                        <span class="block truncate text-dy-text hover:text-dy-red transition-colors cursor-default" title="${safeTitle}">${safeTitle || "-"}</span>
                     </td>
                     <td class="border-b border-dy-border px-3 py-3 text-center text-sm" data-col="type">
                         <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${item.images ? 'bg-purple-50 text-purple-700' : 'bg-blue-50 text-blue-700'}">${item.images ? '图文' : '视频'}</span>
@@ -2432,154 +2546,190 @@ to{transform:translateY(-4px)}
         renderTable();
     }
 
-    /**
-     * 导出选中作品，支持 JSON / CSV / TXT 三种格式
-     * 格式由工具栏 #exportFormat 下拉框决定
-     * 注意：先从 DOM 复选框回读选中状态，防止 selectedIds 与界面不同步
-     */
-    function exportSelectData(format) {
-        // 从 DOM 回读勾选状态，防止 selectedIds 与界面不同步
-        document.querySelectorAll("#tableBody input[type=checkbox]:checked, #gridViewContainer .grid-card-check:checked").forEach(cb => {
-            selectedIds.add(cb.dataset.aid);
-        });
-        if (!selectedIds.size) return alert("请勾选至少一条作品！");
-
-        format = format || "json";
-        const selected = allWorksList.filter(item => selectedIds.has(String(item.aweme_id)));
-        const nickname = userProfile?.nickname || "未知用户";
-
-        // 构建通用数据行
-        const rows = selected.map(item => {
+    function buildExportRows(list) {
+        return list.map(item => {
             const st = item.statistics || {};
+            const imageUrls = (item.images || []).map(img => getBestUrl(img)).filter(Boolean);
+            const coverUrl = getBestUrl(item.video?.cover) || imageUrls[0] || "";
+            const videoUrlList = item.video?.play_addr?.url_list || [];
             return {
-                aweme_id: item.aweme_id,
+                aweme_id: item.aweme_id || "",
                 type: item.images ? "图文" : "视频",
-                video_url: item.video?.play_addr?.url_list?.[item.video.play_addr.url_list.length - 1] || "",
-                play_addr: item.video?.play_addr || null,
-                cover_url: item.video?.cover?.url_list[0] || (item.images?.[0]?.url_list[0] || ""),
-                title: item.desc || "",
+                title: getWorkTitle(item),
                 author: item.author?.nickname || userProfile?.nickname || "",
-                create_time_str: formatDateTime(item.create_time),
+                author_sec_uid: item.author?.sec_uid || userProfile?.sec_uid || "",
+                author_avatar_url: getAuthorAvatarUrl(item),
+                create_time: item.create_time || "",
+                create_time_str: item.create_time ? formatDateTime(item.create_time) : "",
                 digg_count: st.digg_count || 0,
                 share_count: st.share_count || 0,
                 comment_count: st.comment_count || 0,
                 collect_count: st.collect_count || 0,
-                promote_count: st.recommend_count || 0
+                promote_count: st.recommend_count || 0,
+                cover_url: coverUrl,
+                image_urls: imageUrls,
+                video_url: videoUrlList[videoUrlList.length - 1] || "",
+                play_addr: item.video?.play_addr || null,
+                share_url: item.share_url || item.share_info?.share_url || ""
             };
         });
+    }
 
+    function buildUserExportInfo() {
+        return {
+            nickname: userProfile?.nickname || "",
+            unique_id: userProfile?.unique_id || "",
+            short_id: userProfile?.short_id || "",
+            sec_uid: userProfile?.sec_uid || "",
+            signature: userProfile?.signature || "",
+            avatar_url: getUserAvatarUrl(userProfile),
+            ip_location: userProfile?.ip_location || userProfile?.ip_attr || "",
+            region: userProfile?.region || "",
+            follower_count: userProfile?.follower_count || 0,
+            following_count: userProfile?.following_count || 0,
+            aweme_count: userProfile?.aweme_count || 0,
+            total_favorited: userProfile?.total_favorited || 0,
+            page_url: location.href
+        };
+    }
+
+    /**
+     * 导出作品数据，支持选中/全部范围和 JSON / CSV / TXT 三种格式。
+     */
+    function exportWorkData(format, scope = "selected") {
+        document.querySelectorAll("#tableBody input[type=checkbox]:checked, #gridViewContainer .grid-card-check:checked").forEach(cb => {
+            selectedIds.add(cb.dataset.aid);
+        });
+
+        format = format || "json";
+        const isAll = scope === "all";
+        const exportItems = isAll ? allWorksList : allWorksList.filter(item => selectedIds.has(String(item.aweme_id)));
+        if (!exportItems.length) {
+            return alert(isAll ? "暂无可导出的作品数据！" : "请勾选至少一条作品！");
+        }
+
+        const nickname = userProfile?.nickname || "未知用户";
+        const scopeLabel = isAll ? "全部数据" : "选中数据";
+        const countLabel = isAll ? "全部作品数" : "选中作品数";
+        const rows = buildExportRows(exportItems);
+        const userInfo = buildUserExportInfo();
         let content, filename, mimeType;
 
         if (format === "json") {
-            // ---- JSON 格式 ----
-            const obj = {
-                user_info: {
-                    nickname: userProfile?.nickname || "",
-                    unique_id: userProfile?.unique_id || "",
-                    sec_uid: userProfile?.sec_uid || "",
-                    signature: userProfile?.signature || "",
-                    avatar: userProfile?.avatar_thumb?.url_list?.[0] || userProfile?.avatar_medium?.url_list?.[0] || "",
-                    ip_location: userProfile?.ip_location || userProfile?.ip_attr || "",
-                    region: userProfile?.region || "",
-                    follower_count: userProfile?.follower_count || 0,
-                    following_count: userProfile?.following_count || 0,
-                    aweme_count: userProfile?.aweme_count || 0,
-                    total_favorited: userProfile?.total_favorited || 0,
-                    page_url: location.href
-                },
+            content = JSON.stringify({
+                user_info: userInfo,
+                export_scope: isAll ? "all" : "selected",
                 export_time: new Date().toLocaleString(),
-                select_total: selected.length,
+                total: rows.length,
                 list: rows
-            };
-            content = JSON.stringify(obj, null, 2);
-            filename = `抖音作品_${nickname}_选中数据.json`;
-            mimeType = "application/json";
-
+            }, null, 2);
+            filename = `抖音作品_${nickname}_${scopeLabel}.json`;
+            mimeType = "application/json;charset=utf-8";
         } else if (format === "csv") {
-            // ---- CSV 格式 ----
             const headers = [
-                "作品ID", "类型", "标题", "作者", "发布时间",
-                "点赞数", "分享数", "评论数", "收藏数", "推广数",
-                "封面地址", "视频地址"
+                "作品ID", "类型", "标题", "作者", "作者sec_uid", "作者头像",
+                "发布时间", "点赞数", "分享数", "评论数", "收藏数", "推广数",
+                "封面地址", "图片地址", "视频地址", "分享地址"
             ];
-            // CSV 转义：包含逗号/换行/双引号时用双引号包裹，内部双引号转义为两个双引号
             const esc = v => {
-                const s = String(v ?? "");
+                const s = Array.isArray(v) ? v.join(" | ") : String(v ?? "");
                 if (s.includes(",") || s.includes("\n") || s.includes('"')) {
                     return '"' + s.replace(/"/g, '""') + '"';
                 }
                 return s;
             };
-            const headerLine = headers.map(esc).join(",");
             const dataLines = rows.map(r => [
-                r.aweme_id, r.type, r.title, r.author, r.create_time_str,
-                r.digg_count, r.share_count, r.comment_count, r.collect_count, r.promote_count,
-                r.cover_url, r.video_url
+                r.aweme_id, r.type, r.title, r.author, r.author_sec_uid, r.author_avatar_url,
+                r.create_time_str, r.digg_count, r.share_count, r.comment_count, r.collect_count, r.promote_count,
+                r.cover_url, r.image_urls, r.video_url, r.share_url
             ].map(esc).join(","));
-            // 添加 BOM，确保 Excel 正确识别 UTF-8 中文
-            content = "\uFEFF" + [headerLine, ...dataLines].join("\n");
-            filename = `抖音作品_${nickname}_选中数据.csv`;
+            content = "\uFEFF" + [headers.map(esc).join(","), ...dataLines].join("\n");
+            filename = `抖音作品_${nickname}_${scopeLabel}.csv`;
             mimeType = "text/csv;charset=utf-8";
-
         } else {
-            // ---- TXT 格式 ----
             const lines = [];
             lines.push(`========================================`);
             lines.push(`  抖音作品导出数据`);
             lines.push(`========================================`);
             lines.push("");
             lines.push(`  【用户信息】`);
-            lines.push(`  昵称:        ${userProfile?.nickname || "-"}`);
-            lines.push(`  抖音号:      ${userProfile?.unique_id || "-"}`);
-            lines.push(`  sec_uid:     ${userProfile?.sec_uid || "-"}`);
-            lines.push(`  签名:        ${userProfile?.signature || "-"}`);
-            lines.push(`  头像:        ${userProfile?.avatar_thumb?.url_list?.[0] || userProfile?.avatar_medium?.url_list?.[0] || "-"}`);
-            if (userProfile?.ip_location) lines.push(`  IP 属地:     ${userProfile.ip_location}`);
-            if (userProfile?.ip_attr) lines.push(`  IP 属地:     ${userProfile.ip_attr}`);
-            if (userProfile?.region) lines.push(`  地区:        ${userProfile.region}`);
-            lines.push(`  粉丝数:      ${userProfile?.follower_count || 0}`);
-            lines.push(`  关注数:      ${userProfile?.following_count || 0}`);
-            lines.push(`  作品数:      ${userProfile?.aweme_count || 0}`);
-            lines.push(`  获赞总数:    ${userProfile?.total_favorited || 0}`);
-            lines.push(`  主页链接:    ${location.href}`);
+            lines.push(`  昵称:        ${userInfo.nickname || "-"}`);
+            lines.push(`  抖音号:      ${userInfo.unique_id || userInfo.short_id || "-"}`);
+            lines.push(`  sec_uid:     ${userInfo.sec_uid || "-"}`);
+            lines.push(`  签名:        ${userInfo.signature || "-"}`);
+            lines.push(`  头像:        ${userInfo.avatar_url || "-"}`);
+            if (userInfo.ip_location) lines.push(`  IP 属地:     ${userInfo.ip_location}`);
+            if (userInfo.region) lines.push(`  地区:        ${userInfo.region}`);
+            lines.push(`  粉丝数:      ${userInfo.follower_count}`);
+            lines.push(`  关注数:      ${userInfo.following_count}`);
+            lines.push(`  作品数:      ${userInfo.aweme_count}`);
+            lines.push(`  获赞总数:    ${userInfo.total_favorited}`);
+            lines.push(`  主页链接:    ${userInfo.page_url}`);
             lines.push("");
             lines.push(`  导出时间:    ${new Date().toLocaleString()}`);
-            lines.push(`  选中作品数:  ${selected.length}`);
+            lines.push(`  ${countLabel}:  ${rows.length}`);
             lines.push("");
             lines.push(`========================================`);
             lines.push("");
-            selected.forEach((item, idx) => {
-                const st = item.statistics || {};
-                const promoteCount = st.recommend_count || 0;
-                const coverUrl = item.video?.cover?.url_list[0] || (item.images?.[0]?.url_list[0] || "");
-                const videoUrl = item.video?.play_addr?.url_list?.[item.video.play_addr.url_list.length - 1] || "";
-                lines.push(`--- 作品 ${idx + 1} / ${selected.length} ---`);
-                lines.push(`  ID:      ${item.aweme_id}`);
-                lines.push(`  类型:    ${item.images ? "图文" : "视频"}`);
-                lines.push(`  标题:    ${item.desc || "(无标题)"}`);
-                lines.push(`  作者:    ${item.author?.nickname || userProfile?.nickname || "-"}`);
-                lines.push(`  时间:    ${formatDateTime(item.create_time)}`);
-                lines.push(`  点赞:    ${st.digg_count || 0}`);
-                lines.push(`  分享:    ${st.share_count || 0}`);
-                lines.push(`  评论:    ${st.comment_count || 0}`);
-                lines.push(`  收藏:    ${st.collect_count || 0}`);
-                lines.push(`  推广:    ${promoteCount}`);
-                if (videoUrl) lines.push(`  视频:    ${videoUrl}`);
-                if (coverUrl) lines.push(`  封面:    ${coverUrl}`);
+            rows.forEach((row, idx) => {
+                lines.push(`--- 作品 ${idx + 1} / ${rows.length} ---`);
+                lines.push(`  ID:      ${row.aweme_id}`);
+                lines.push(`  类型:    ${row.type}`);
+                lines.push(`  标题:    ${row.title || "(无标题)"}`);
+                lines.push(`  作者:    ${row.author || "-"}`);
+                lines.push(`  头像:    ${row.author_avatar_url || "-"}`);
+                lines.push(`  时间:    ${row.create_time_str || "-"}`);
+                lines.push(`  点赞:    ${row.digg_count}`);
+                lines.push(`  分享:    ${row.share_count}`);
+                lines.push(`  评论:    ${row.comment_count}`);
+                lines.push(`  收藏:    ${row.collect_count}`);
+                lines.push(`  推广:    ${row.promote_count}`);
+                if (row.video_url) lines.push(`  视频:    ${row.video_url}`);
+                if (row.cover_url) lines.push(`  封面:    ${row.cover_url}`);
+                if (row.image_urls.length) lines.push(`  图片:    ${row.image_urls.join(" | ")}`);
+                if (row.share_url) lines.push(`  分享:    ${row.share_url}`);
                 lines.push("");
             });
             content = lines.join("\n");
-            filename = `抖音作品_${nickname}_选中数据.txt`;
+            filename = `抖音作品_${nickname}_${scopeLabel}.txt`;
             mimeType = "text/plain;charset=utf-8";
         }
 
-        const blob = new Blob([content], { type: mimeType });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
+        triggerDownload(new Blob([content], { type: mimeType }), filename);
+    }
+
+    function exportCaptionText(scope = "selected") {
+        document.querySelectorAll("#tableBody input[type=checkbox]:checked, #gridViewContainer .grid-card-check:checked").forEach(cb => {
+            selectedIds.add(cb.dataset.aid);
+        });
+
+        const isAll = scope === "all";
+        const exportItems = isAll ? allWorksList : allWorksList.filter(item => selectedIds.has(String(item.aweme_id)));
+        if (!exportItems.length) {
+            return alert(isAll ? "暂无可导出的文案！" : "请勾选至少一条作品！");
+        }
+
+        const nickname = userProfile?.nickname || "未知用户";
+        const scopeLabel = isAll ? "全部文案" : "选中文案";
+        const lines = [];
+        exportItems.forEach((item, idx) => {
+            const title = getWorkTitle(item).trim();
+            if (!title) return;
+            lines.push(`${idx + 1}. ${title}`);
+            lines.push("");
+        });
+
+        if (!lines.length) {
+            return alert("当前作品没有可导出的文案。");
+        }
+
+        const content = lines.join("\n").trim() + "\n";
+        const filename = `抖音作品_${nickname}_${scopeLabel}.txt`;
+        triggerDownload(new Blob([content], { type: "text/plain;charset=utf-8" }), filename);
+    }
+
+    function exportSelectData(format) {
+        exportWorkData(format, "selected");
     }
 
     /**
