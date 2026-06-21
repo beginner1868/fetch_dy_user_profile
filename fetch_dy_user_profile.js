@@ -43,7 +43,7 @@
     let userProfile = null;                              // 用户信息对象（API 返回的 json.user）
     let allWorksList = [];                               // 全部拉取到的作品原始列表
     let filterWorks = [];                                // 搜索/排序后的作品列表（实际渲染源）
-    const pageSize = 20;                                 // 每页显示条数
+    let pageSize = parseInt(localStorage.getItem('dy-page-size')) || 20; // 每页显示条数（可切换）
     let currentPage = 1;                                 // 当前页码
     let selectedIds = new Set();                         // 已选中的作品 aweme_id 集合
     let currentView = localStorage.getItem('dy-drawer-view') || 'table'; // 当前视图：'table' | 'grid'
@@ -225,7 +225,7 @@
 #dy-drawer-wrap.dark-mode{background-color:#1a1a1a !important;color:#e5e5e5 !important}
 #dy-drawer-wrap.dark-mode .drawer-header,#dy-drawer-wrap.dark-mode .drawer-user-info,#dy-drawer-wrap.dark-mode .drawer-toolbar,#dy-drawer-wrap.dark-mode .page-bar{background-color:#2d2d2d !important;border-color:#404040 !important}
 #dy-drawer-wrap.dark-mode .drawer-user-info{background:linear-gradient(to right,#2d2d2d,#333333) !important}
-#dy-drawer-wrap.dark-mode input,#dy-drawer-wrap.dark-mode table,#dy-drawer-wrap.dark-mode thead{background-color:#2d2d2d !important;color:#e5e5e5 !important;border-color:#404040 !important}
+#dy-drawer-wrap.dark-mode input,#dy-drawer-wrap.dark-mode select,#dy-drawer-wrap.dark-mode table,#dy-drawer-wrap.dark-mode thead{background-color:#2d2d2d !important;color:#e5e5e5 !important;border-color:#404040 !important}
 #dy-drawer-wrap.dark-mode tbody tr.bg-white{background-color:#2d2d2d !important}
 #dy-drawer-wrap.dark-mode tbody tr.bg-row-even{background-color:#333333 !important}
 #dy-drawer-wrap.dark-mode tbody tr:hover{background-color:#404040 !important}
@@ -687,7 +687,10 @@ to{transform:translateY(-4px)}
             <div class="page-bar px-6 py-4 border-t-2 border-dy-border flex gap-3 items-center shrink-0 text-sm bg-white justify-between">
                 <div class="flex items-center gap-4 text-dy-text-secondary">
                     <span>筛选后共 <span id="totalNum" class="font-semibold text-dy-text">0</span> 条</span>
-                    <span>每页 ${pageSize} 条</span>
+                    <span>每页
+                        <select id="pageSizeSelect" class="mx-1 px-2 py-0.5 rounded border border-dy-border bg-white text-dy-text text-sm font-medium cursor-pointer focus:outline-none focus:border-dy-red transition-colors hover:border-gray-300">
+                            ${[20, 50, 100, 200, 500].map(n => `<option value="${n}" ${pageSize === n ? 'selected' : ''}>${n}</option>`).join('')}
+                        </select>条</span>
                     <span>共 <span id="totalPageNum" class="font-semibold text-dy-text">0</span> 页</span>
                 </div>
                 <div class="flex items-center gap-3">
@@ -805,6 +808,14 @@ to{transform:translateY(-4px)}
                 viewSwitchMenu.classList.remove("show");
             };
         });
+
+        // 每页条数切换
+        document.getElementById("pageSizeSelect").onchange = function() {
+            pageSize = parseInt(this.value);
+            localStorage.setItem('dy-page-size', pageSize);
+            currentPage = 1;
+            renderTable();
+        };
 
         // 抽屉开关
         btn.onclick = () => wrap.classList.toggle("open");
@@ -1376,7 +1387,7 @@ to{transform:translateY(-4px)}
         }
 
         pageData.forEach(item => {
-            const aid = item.aweme_id;
+            const aid = String(item.aweme_id);
             const checked = selectedIds.has(aid) ? "checked" : "";
             const cover = item.video?.cover?.url_list[0] || (item.images?.[0]?.url_list[0] || "");
             const stats = item.statistics || {};
@@ -1468,6 +1479,7 @@ to{transform:translateY(-4px)}
                 };
             }
 
+            updateSelCount();
             return;
         }
 
@@ -1516,7 +1528,7 @@ to{transform:translateY(-4px)}
             pageData.forEach((item, idx) => {
                 const tr = document.createElement("tr");
                 tr.className = `transition-all duration-150 ${idx % 2 === 1 ? "bg-row-even" : "bg-white"} hover:bg-row-hover cursor-default group`;
-                const aid = item.aweme_id;
+                const aid = String(item.aweme_id);
                 const checked = selectedIds.has(aid) ? "checked" : "";
                 
                 const cover = item.video?.cover?.url_list[0] || (item.images?.[0]?.url_list[0] || "");
@@ -1878,7 +1890,7 @@ to{transform:translateY(-4px)}
      * 全选当前筛选结果
      */
     function selectAllItems() {
-        filterWorks.forEach(item => selectedIds.add(item.aweme_id));
+        filterWorks.forEach(item => selectedIds.add(String(item.aweme_id)));
         renderTable();
     }
     
@@ -1903,7 +1915,7 @@ to{transform:translateY(-4px)}
         if (!selectedIds.size) return alert("请勾选至少一条作品！");
 
         format = format || "json";
-        const selected = allWorksList.filter(item => selectedIds.has(item.aweme_id));
+        const selected = allWorksList.filter(item => selectedIds.has(String(item.aweme_id)));
         const nickname = userProfile?.nickname || "未知用户";
 
         // 构建通用数据行
@@ -2147,7 +2159,7 @@ to{transform:translateY(-4px)}
         if (!selectedIds.size) return alert("请勾选至少一条作品！");
 
         const videoItems = allWorksList.filter(item =>
-            selectedIds.has(item.aweme_id) && !item.images
+            selectedIds.has(String(item.aweme_id)) && !item.images
         );
         if (!videoItems.length) {
             return alert("选中的作品中没有视频类型，请选择视频作品后再试！");
@@ -2211,6 +2223,7 @@ to{transform:translateY(-4px)}
                 overlay.classList.remove("show");
                 alert("没有视频可以打包，请查看控制台日志。");
             }
+            updateSelCount();
             return;
         }
 
